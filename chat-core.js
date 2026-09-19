@@ -73,16 +73,12 @@ window.CPChat = (function () {
     let inner = '';
 
     if (m.is_deleted) {
-      return `<div class="msg-bubble"><i style="opacity:.6">🚫 This message was deleted</i>
-        <span class="msg-meta-space"></span>
-        <span class="msg-meta"><span>${clock(m.created_at)}</span></span></div>`;
+      return `<div class="msg-bubble"><i style="opacity:.6">🚫 This message was deleted</i><span class="msg-meta-space"></span><span class="msg-meta"><span>${clock(m.created_at)}</span></span></div>`;
     }
 
     // quoted reply
     if (m.reply_to_content) {
-      inner += `<span class="msg-reply" data-jump="${esc(m.reply_to || '')}">
-        <b>${esc(m.reply_to_name || 'Message')}</b>
-        <span>${esc(String(m.reply_to_content).slice(0, 90))}</span></span>`;
+      inner += `<span class="msg-reply" data-jump="${esc(m.reply_to || '')}"><b>${esc(m.reply_to_name || 'Message')}</b><span>${esc(String(m.reply_to_content).slice(0, 90))}</span></span>`;
     }
 
     // sender name in groups
@@ -97,17 +93,12 @@ window.CPChat = (function () {
       inner += `<video class="msg-media" src="${esc(media)}" controls playsinline preload="metadata"></video>`;
       if (m.content) inner += `<div class="msg-caption">${linkify(m.content)}</div>`;
     } else if (hasMedia && type.startsWith('audio')) {
-      inner += `<div class="msg-voice" data-audio="${esc(media)}">
-          <button class="vplay" aria-label="Play"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg></button>
-          <span class="vbar"><i></i></span>
-          <span class="vdur">${m.media_duration ? mmss(m.media_duration) : '0:00'}</span>
-        </div>`;
+      inner += `<div class="msg-voice" data-audio="${esc(media)}"><button class="vplay" aria-label="Play"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg></button><span class="vbar"><i></i></span><span class="vdur">${m.media_duration ? mmss(m.media_duration) : '0:00'}</span></div>`;
     } else if (hasMedia) {
       const name = media.split('/').pop().split('?')[0];
-      inner += `<a class="msg-file" href="${esc(media)}" target="_blank" rel="noopener">
-          <span class="fi">📎</span>
-          <span><span class="fn">${esc(decodeURIComponent(name)).slice(0, 34)}</span><span class="fs">Tap to open</span></span>
-        </a>`;
+      let fileName = name;
+      try { fileName = decodeURIComponent(name); } catch (_) {}
+      inner += `<a class="msg-file" href="${esc(media)}" target="_blank" rel="noopener"><span class="fi">📎</span><span><span class="fn">${esc(fileName).slice(0, 34)}</span><span class="fs">Tap to open</span></span></a>`;
     } else {
       inner += linkify(m.content || '');
     }
