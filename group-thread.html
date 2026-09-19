@@ -1115,7 +1115,8 @@ body.chat-page { overflow: hidden; height: 100dvh; }
 
 /* ---- Composer ---- */
 .thread-composer {
-  position: static; transform: none; flex-shrink: 0; width: 100%; max-width: none;
+  position: relative; left: auto; right: auto; bottom: auto; transform: none;
+  flex-shrink: 0; width: 100%; max-width: none; box-sizing: border-box;
   display: flex; gap: 7px; align-items: flex-end;
   padding: 8px 10px calc(8px + var(--safe-bottom));
   background: rgba(18,16,29,0.97); backdrop-filter: blur(14px); border-top: 1px solid var(--border);
@@ -1209,6 +1210,67 @@ body.chat-page { overflow: hidden; height: 100dvh; }
 .attach-menu button:active { background: var(--surface2); }
 .attach-menu .em { width: 32px; height: 32px; border-radius: 50%; background: var(--brand-soft); display: flex; align-items: center; justify-content: center; font-size: 15px; }
 
+
+/* ============================================================
+   FIXES: composer alignment, desktop framing, file bubbles,
+   and the incoming-call popup (this page is a fixed frame, so
+   the popup needs its own styles or it renders hidden behind it).
+   ============================================================ */
+
+/* Desktop: present the chat as a centred panel instead of a bare column. */
+@media (min-width: 720px) {
+  .chat-frame {
+    border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+    box-shadow: 0 0 90px rgba(124,58,237,.16);
+  }
+}
+
+/* File bubbles: name on one line, hint underneath, long names ellipsised. */
+.msg-file > span:last-child { min-width: 0; display: block; }
+.msg-file .fn, .msg-file .fs { display: block; }
+.msg-file .fn { max-width: 210px; }
+
+/* Quoted reply: show up to two full lines instead of clipping mid-line. */
+.msg-reply { max-height: none; white-space: normal; }
+.msg-reply span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Incoming-call popup */
+.incoming-call {
+  position: fixed; inset: 0; z-index: 1000;
+  background: linear-gradient(180deg, var(--brand-dark), #0E0A1D 70%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: #fff; text-align: center;
+  padding: calc(24px + var(--safe-top)) 24px calc(24px + var(--safe-bottom));
+}
+.incoming-call .avatar {
+  width: 104px; height: 104px; font-size: 34px; border-radius: 50%; margin-bottom: 18px;
+  background: rgba(255,255,255,.14); display: flex; align-items: center; justify-content: center;
+  font-weight: 800; animation: ringpulse 1.6s ease-in-out infinite;
+}
+@keyframes ringpulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(255,255,255,.28); }
+  50% { box-shadow: 0 0 0 20px rgba(255,255,255,0); }
+}
+.incoming-call h2 { font-size: 22px; margin: 0; max-width: 100%; overflow-wrap: anywhere; }
+.incoming-call p { color: rgba(255,255,255,.75); font-size: 14px; margin: 6px 0 0; }
+.incoming-call .row { display: flex; gap: 60px; margin-top: 46px; }
+.call-ctl {
+  width: 64px; border: none; background: none; color: #fff;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 700;
+}
+.call-ctl svg { width: 24px; height: 24px; }
+.call-ctl > svg {
+  box-sizing: content-box; padding: 17px; border-radius: 50%;
+  background: rgba(255,255,255,0.16); transition: transform .12s;
+}
+.call-ctl:active > svg { transform: scale(.92); }
+.call-ctl.end > svg { background: var(--danger); }
+.call-ctl.accept > svg { background: var(--money); color: #06281B; }
+@media (max-height: 460px) {
+  .incoming-call .avatar { width: 64px; height: 64px; font-size: 22px; margin-bottom: 10px; }
+  .incoming-call .row { margin-top: 20px; }
+}
 </style>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#7C3AED">
@@ -1258,7 +1320,7 @@ body.chat-page { overflow: hidden; height: 100dvh; }
     <button id="cancelReplyBtn" aria-label="Cancel reply">×</button>
   </div>
 
-  <div class="thread-composer" style="position:relative">
+  <div class="thread-composer">
     <div class="attach-menu" id="attachMenu">
       <button data-pick="image"><span class="em">🖼️</span> Photo</button>
       <button data-pick="video"><span class="em">🎬</span> Video</button>
@@ -1293,7 +1355,7 @@ body.chat-page { overflow: hidden; height: 100dvh; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="config.js?v=3"></script>
-<script src="chat-core.js?v=3"></script>
+<script src="chat-core.js?v=4"></script>
 <script>
 // Shared Supabase client — loaded on every page after the Supabase UMD script.
 // Uses the same project as the React app (public anon key, safe to expose client-side; RLS enforces access).
