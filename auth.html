@@ -1339,9 +1339,14 @@ document.getElementById('testConnectionBtn').addEventListener('click', async () 
 
 // ---- Continue with Google ----
 document.getElementById('googleBtn').addEventListener('click', async () => {
+  // Supabase only honours a redirectTo that matches its Redirect URLs allow-list, and a URL
+  // with a ?query on the end usually doesn't match — it then falls back to the Site URL, which
+  // is how people ended up "somewhere else". So redirect to a clean URL and remember where the
+  // user was heading in localStorage instead; onboarding.html picks it up on return.
+  try { localStorage.setItem('cp_return_to', JSON.stringify({ to: cpReturnTo(), t: Date.now() })); } catch (_) {}
   const { error } = await window.sb.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: window.location.origin + '/onboarding.html?returnTo=' + encodeURIComponent(cpReturnTo()) },
+    options: { redirectTo: window.location.origin + '/onboarding.html' },
   });
   if (error) { console.error('Google sign-in error:', error); showError(error); }
 });
