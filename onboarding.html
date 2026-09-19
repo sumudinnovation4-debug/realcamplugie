@@ -933,6 +933,14 @@ window.CP.esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   // onboarding until a school is locked in. (Skip this check on the
   // onboarding page itself to avoid a redirect loop.)
   const isOnboardingPage = window.location.pathname.endsWith('onboarding.html');
+
+  // Returning Google user who already picked a school: Google always lands on this page,
+  // so don't make them fill the form in again — send them on their way.
+  if (isOnboardingPage && profile && profile.university_id) {
+    window.location.replace(cpReturnDest(true));
+    return;
+  }
+
   if (!isOnboardingPage && profile && !profile.university_id) {
     window.location.href = 'onboarding.html';
     return;
@@ -950,6 +958,23 @@ window.CP_signOut = async () => {
   await window.sb.auth.signOut();
   window.location.href = 'auth.html';
 };
+
+// Where to send the user once onboarding is done (or skipped because they already finished it).
+// Order: ?returnTo= in the URL (email sign-up), then what auth.html saved before the Google
+// round-trip, else Home. Only same-site relative .html paths are honoured (no open redirect).
+function cpReturnDest(consume) {
+  const ok = (v) => typeof v === 'string' && /^[a-zA-Z0-9_\-]+\.html(\?[^\s]*)?$/.test(v);
+  let dest = new URLSearchParams(window.location.search).get('returnTo');
+  if (!ok(dest)) {
+    dest = null;
+    try {
+      const saved = JSON.parse(localStorage.getItem('cp_return_to') || 'null');
+      if (saved && ok(saved.to) && Date.now() - saved.t < 30 * 60 * 1000) dest = saved.to;
+    } catch (_) {}
+  }
+  if (consume) { try { localStorage.removeItem('cp_return_to'); } catch (_) {} }
+  return dest || 'home.html';
+}
 
 </script>
 <script>
@@ -1152,10 +1177,7 @@ async function finishOnboarding() {
   // Send them back to whatever page they were trying to reach when they
   // signed up (e.g. a listing a guest wanted to buy or message about),
   // instead of always dropping new users on Home.
-  const params = new URLSearchParams(window.location.search);
-  const rt = params.get('returnTo');
-  const dest = (rt && /^[a-zA-Z0-9_\-]+\.html(\?[^\s]*)?$/.test(rt)) ? rt : 'home.html';
-  window.location.href = dest;
+  window.location.href = cpReturnDest(true);
 }
 document.getElementById('step4Skip').addEventListener('click', finishOnboarding);
 document.getElementById('step4Finish').addEventListener('click', async () => {
