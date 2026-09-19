@@ -838,9 +838,17 @@ img { max-width: 100%; display: block; }
 .dmap-sheet {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--surface);
   border-radius: 20px 20px 0 0; padding: 10px 16px calc(16px + var(--safe-bottom));
-  box-shadow: 0 -8px 26px rgba(0,0,0,.4); max-height: 58vh; overflow-y: auto;
+  box-shadow: 0 -8px 26px rgba(0,0,0,.4); overflow-y: auto;
+  height: 58vh; max-height: 80vh; touch-action: none;
 }
-.dmap-sheet-handle { width: 36px; height: 4px; background: var(--border); border-radius: 999px; margin: 0 auto 12px; }
+.dmap-sheet.dmap-sheet-snapping { transition: height .28s cubic-bezier(.2,.9,.3,1); }
+.dmap-sheet-handle { width: 36px; height: 4px; background: var(--border); border-radius: 999px; margin: 0 auto 12px; cursor: grab; touch-action: none; }
+.dmap-eta-chip {
+  display: flex; align-items: center; gap: 8px; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; font-size: 12.5px; font-weight: 700;
+}
+.dmap-eta-chip b { color: var(--accent); font-size: 14px; }
+.dmap-eta-chip span { color: var(--text3); font-weight: 500; }
 .dmap-stop { display: flex; align-items: flex-start; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .dmap-stop:last-of-type { border-bottom: none; }
 .dmap-stop-dot {
@@ -1547,10 +1555,107 @@ let dmapMap = null;
 let dmapPoll = null;
 
 function closeDeliveryMap() {
-  if (dmapPoll) { clearInterval(dmapPoll); dmapPoll = null; }
+  if (dmapPoll) { window.sb.removeChannel(dmapPoll); dmapPoll = null; }
   if (dmapMap) { dmapMap.remove(); dmapMap = null; }
   const overlay = document.getElementById('dmapOverlay');
   if (overlay) overlay.remove();
+}
+
+// Real road-following route + ETA, via OSRM's public demo router (free, no
+// API key). This is a shared demo server meant for testing/low-volume use —
+// fine for now, but if Swift grows past a few hundred deliveries a day,
+// swap this for a paid router (Mapbox Directions, OpenRouteService, etc.)
+// or self-host OSRM, since the public one rate-limits and gives no uptime
+// guarantee. pickup/dropoff are [lat, lng]; OSRM wants lng,lat.
+async function fetchRoute(from, to) {
+  const url = `https://router.project-osrm.org/route/v1/driving/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('routing request failed');
+  const data = await res.json();
+  const route = data.routes?.[0];
+  if (!route) throw new Error('no route found');
+  return {
+    latlngs: route.geometry.coordinates.map(([lng, lat]) => [lat, lng]),
+    durationSec: route.duration,
+    distanceM: route.distance,
+  };
+}
+
+function fmtEta(durationSec, distanceM) {
+  const mins = Math.max(1, Math.round(durationSec / 60));
+  const km = distanceM / 1000;
+  return `${mins} min${mins === 1 ? '' : 's'} · ${km < 1 ? `${Math.round(distanceM)} m` : `${km.toFixed(1)} km`}`;
+}
+
+// Draws the actual road route on the map (falls back to a straight dashed
+// line if the routing request fails) and, if an ETA chip element is given,
+// fills it in. Returns the drawn layer so callers can remove/redraw it.
+async function drawRoute(map, from, to, etaEl) {
+  try {
+    const { latlngs, durationSec, distanceM } = await fetchRoute(from, to);
+    const line = L.polyline(latlngs, { color: '#A78BFA', weight: 4, opacity: .85 }).addTo(map);
+    if (etaEl) { etaEl.style.display = 'flex'; etaEl.innerHTML = `<b>🕐 ${fmtEta(durationSec, distanceM)}</b><span>away</span>`; }
+    return line;
+  } catch (err) {
+    console.error('Route fetch failed, falling back to straight line:', err);
+    const line = L.polyline([from, to], { color: '#8D86AA', weight: 2, dashArray: '6,8', opacity: .7 }).addTo(map);
+    if (etaEl) etaEl.style.display = 'none';
+    return line;
+  }
+}
+
+// Glides a marker to its new position instead of snapping — this is most of
+// what makes a live tracker feel like Uber/DoorDash instead of a refreshing
+// page. durationMs should be a bit less than the poll interval so each glide
+// finishes before the next update arrives.
+function animateMarkerTo(marker, newPos, durationMs) {
+  const start = marker.getLatLng();
+  const startTime = performance.now();
+  (function step(now) {
+    const t = Math.min(1, (now - startTime) / durationMs);
+    marker.setLatLng([
+      start.lat + (newPos[0] - start.lat) * t,
+      start.lng + (newPos[1] - start.lng) * t,
+    ]);
+    if (t < 1) requestAnimationFrame(step);
+  })(startTime);
+}
+
+// Makes the bottom sheet actually draggable — peek/half/full snap points,
+// like Uber/DoorDash/most delivery apps. Previously the little handle bar
+// was just decorative.
+function initSheetDrag(sheet) {
+  const handle = sheet.querySelector('.dmap-sheet-handle');
+  const PEEK = 110;
+  const HALF = Math.round(window.innerHeight * 0.40);
+  const FULL = Math.round(window.innerHeight * 0.58);
+  const MAX = Math.round(window.innerHeight * 0.80);
+  let startY = 0, startH = 0, dragging = false;
+
+  const onMove = (e) => {
+    if (!dragging) return;
+    const h = Math.min(MAX, Math.max(PEEK, startH + (startY - e.clientY)));
+    sheet.style.height = h + 'px';
+  };
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    const h = sheet.getBoundingClientRect().height;
+    const nearest = [PEEK, HALF, FULL].reduce((a, b) => Math.abs(b - h) < Math.abs(a - h) ? b : a);
+    sheet.classList.add('dmap-sheet-snapping');
+    sheet.style.height = nearest + 'px';
+    setTimeout(() => sheet.classList.remove('dmap-sheet-snapping'), 300);
+  };
+  handle.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    startY = e.clientY;
+    startH = sheet.getBoundingClientRect().height;
+    sheet.classList.remove('dmap-sheet-snapping');
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  });
 }
 
 /**
@@ -1583,6 +1688,7 @@ function openDeliveryMap(order, opts = {}) {
     <button class="dmap-locate-btn" id="dmapLocateBtn" title="Center on me"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
     <div class="dmap-sheet" id="dmapSheet">
       <div class="dmap-sheet-handle"></div>
+      <div class="dmap-eta-chip" id="dmapEtaChip" style="display:none"></div>
       ${pickup ? `
       <div class="dmap-stop${activeLeg === 'pickup' ? ' active' : ''}" data-leg="pickup">
         <div class="dmap-stop-dot pickup">🏪</div>
@@ -1625,20 +1731,55 @@ function openDeliveryMap(order, opts = {}) {
   const bounds = [];
   if (pickup) { L.marker(pickup, { icon: dmapIcon('🏪', '#FBBF24') }).addTo(map).bindPopup('Seller — pickup'); bounds.push(pickup); }
   if (dropoff) { L.marker(dropoff, { icon: dmapIcon('🏁', '#34D399') }).addTo(map).bindPopup('Buyer — drop-off'); bounds.push(dropoff); }
-  if (pickup && dropoff) L.polyline([pickup, dropoff], { color: '#8D86AA', weight: 2, dashArray: '6,8', opacity: .7 }).addTo(map);
+
+  const etaChip = document.getElementById('dmapEtaChip');
+  // Route from wherever we're tracking FROM: the live runner if we have one
+  // to follow, otherwise straight from pickup to dropoff.
+  let routeLine = null;
+  if (pickup && dropoff && !pollRunnerId) {
+    drawRoute(map, pickup, dropoff, etaChip).then(line => { routeLine = line; });
+  }
 
   let runnerMarker = null;
-  async function pollRunnerPos() {
-    if (!pollRunnerId) return;
-    const { data } = await window.sb.from('swift_runners').select('current_lat, current_lng').eq('id', pollRunnerId).maybeSingle();
-    if (!data?.current_lat) return;
-    const pos = [data.current_lat, data.current_lng];
-    if (runnerMarker) runnerMarker.setLatLng(pos);
+  let lastRoutedFrom = null; // avoid re-requesting a route for tiny position jitter
+
+  async function handleRunnerPos(pos) {
+    if (runnerMarker) animateMarkerTo(runnerMarker, pos, 2500);
     else runnerMarker = L.marker(pos, { icon: dmapIcon('🛵', '#A78BFA') }).addTo(map).bindPopup('Runner');
+
+    // Route from the runner's live position to whichever stop is active —
+    // this is what makes the line "count down" as they get closer, instead
+    // of always showing the full pickup→dropoff route.
+    const target = activeLeg === 'dropoff' ? dropoff : pickup;
+    if (target) {
+      const movedEnough = !lastRoutedFrom || Math.hypot(pos[0] - lastRoutedFrom[0], pos[1] - lastRoutedFrom[1]) > 0.0008; // ~90m
+      if (movedEnough) {
+        lastRoutedFrom = pos;
+        if (routeLine) map.removeLayer(routeLine);
+        routeLine = await drawRoute(map, pos, target, etaChip);
+      }
+    }
   }
-  if (pollRunnerId) { pollRunnerPos(); dmapPoll = setInterval(pollRunnerPos, 6000); }
+
+  if (pollRunnerId) {
+    // Initial placement, then live push updates via Realtime — the runner's
+    // own device writes current_lat/current_lng at most every 10s (see
+    // startLocationBroadcast below), and this picks each write up
+    // immediately instead of waiting on a poll interval.
+    window.sb.from('swift_runners').select('current_lat, current_lng').eq('id', pollRunnerId).maybeSingle()
+      .then(({ data }) => { if (data?.current_lat) handleRunnerPos([data.current_lat, data.current_lng]); });
+
+    dmapPoll = window.sb.channel(`runner-pos-${pollRunnerId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'swift_runners', filter: `id=eq.${pollRunnerId}` }, (payload) => {
+        const row = payload.new;
+        if (row?.current_lat) handleRunnerPos([row.current_lat, row.current_lng]);
+      })
+      .subscribe();
+  }
 
   if (bounds.length > 1) map.fitBounds(bounds, { padding: [70, 70] });
+
+  initSheetDrag(document.getElementById('dmapSheet'));
 
   document.getElementById('dmapLocateBtn').addEventListener('click', () => {
     if (!navigator.geolocation) return;
