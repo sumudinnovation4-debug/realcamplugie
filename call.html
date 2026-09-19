@@ -1036,6 +1036,26 @@ body { overflow: hidden; }
 .call-ctl.accept > svg { background: var(--money); color: #06281B; }
 .call-ctl.off > svg { background: rgba(255,255,255,0.08); opacity: .55; }
 
+/* ---- Call screen fixes: incoming screen, small phones, landscape ---- */
+.call-screen.incoming { background: linear-gradient(180deg, var(--brand-dark), #0E0A1D 70%); }
+.call-screen.incoming #remoteVideo, .call-screen.incoming #localVideo { display: none !important; }
+.call-screen.incoming .call-info { position: relative; top: auto; left: auto; text-align: center; }
+.call-screen.incoming .call-info .avatar { display: flex; }
+.call-screen.incoming .call-info h2 { font-size: 22px; }
+.call-screen { height: 100dvh; }
+.call-controls, .call-answer { padding: 0 8px; }
+@media (max-width: 380px) {
+  .call-controls { gap: 6px; }
+  .call-ctl { width: 54px; font-size: 10px; }
+  .call-ctl > svg { padding: 14px; }
+  .call-screen.video-on #localVideo { width: 88px; height: 120px; right: 10px; }
+}
+@media (max-height: 460px) {
+  .call-info .avatar { width: 64px; height: 64px; font-size: 22px; margin-bottom: 8px; }
+  .call-screen.video-on #localVideo { width: 84px; height: 112px; }
+  .call-controls, .call-answer { bottom: calc(14px + var(--safe-bottom)); }
+}
+
 /* Incoming-call overlay shown on every other page */
 .incoming-call {
   position: fixed; inset: 0; z-index: 500;
@@ -1337,6 +1357,7 @@ $('callName').textContent = peerName;
 $('callAvatar').textContent = peerName.slice(0, 2).toUpperCase();
 $('callAvatar').classList.add('ringing');
 if (wantVideo) screenEl.classList.add('video-on');
+if (role === 'callee' && params.get('auto') !== '1') screenEl.classList.add('incoming'); // ringing: show avatar + Answer/Decline, not a black video screen
 $('camBtn').classList.toggle('off', !wantVideo);
 
 function setStatus(text) { $('callStatus').textContent = text; }
@@ -1430,7 +1451,7 @@ async function setupPeerConnection() {
   localStream = await getMedia(videoOn);
   localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
   $('localVideo').srcObject = localStream;
-  $('flipBtn').style.display = videoOn ? 'flex' : 'none';
+  refreshFlipBtn();
 }
 
 function signal(payload) {
@@ -1586,6 +1607,7 @@ async function startAsCallee() {
 
 async function acceptCall() {
   tone.stop();
+  screenEl.classList.remove('incoming');
   $('answerRow').style.display = 'none';
   document.querySelector('.call-controls').style.display = 'flex';
   setStatus('Connecting…');
@@ -1623,7 +1645,7 @@ $('camBtn').addEventListener('click', async (e) => {
     track.enabled = videoOn;
     screenEl.classList.toggle('video-on', videoOn);
     e.currentTarget.classList.toggle('off', !videoOn);
-    $('flipBtn').style.display = videoOn ? 'flex' : 'none';
+    refreshFlipBtn();
     return;
   }
   // Started as voice-only — add a camera track mid-call.
@@ -1636,7 +1658,7 @@ $('camBtn').addEventListener('click', async (e) => {
     videoOn = true;
     screenEl.classList.add('video-on');
     e.currentTarget.classList.remove('off');
-    $('flipBtn').style.display = 'flex';
+    refreshFlipBtn();
     // renegotiate
     makingOffer = true;
     const offer = await pc.createOffer();
@@ -1647,18 +1669,80 @@ $('camBtn').addEventListener('click', async (e) => {
 });
 
 let facing = 'user';
-$('flipBtn').addEventListener('click', async () => {
-  facing = facing === 'user' ? 'environment' : 'user';
+let flipping = false;
+
+// Show Flip only when the device really has another camera to flip to.
+async function hasMultipleCameras() {
   try {
-    const cam = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing } });
-    const newTrack = cam.getVideoTracks()[0];
-    const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-    if (sender) await sender.replaceTrack(newTrack);
-    localStream.getVideoTracks().forEach(t => { localStream.removeTrack(t); t.stop(); });
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    if (devs.filter(d => d.kind === 'videoinput').length > 1) return true;
+  } catch (_) {}
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent); // labels can be empty before permission
+}
+async function refreshFlipBtn() {
+  $('flipBtn').style.display = (videoOn && await hasMultipleCameras()) ? 'flex' : 'none';
+}
+
+// Open the other camera. Callers must have released the current camera first.
+async function openCamera(nextFacing, avoidDeviceId) {
+  const attempts = [{ facingMode: { exact: nextFacing } }, { facingMode: { ideal: nextFacing } }];
+  for (const video of attempts) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+      const t = s.getVideoTracks()[0];
+      if (avoidDeviceId && t.getSettings().deviceId === avoidDeviceId) { t.stop(); continue; } // got the same camera back
+      return t;
+    } catch (_) { /* try the next strategy */ }
+  }
+  // Some devices ignore facingMode — cycle to a different camera by id instead.
+  const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  const other = cams.find(d => d.deviceId && d.deviceId !== avoidDeviceId);
+  if (!other) throw new Error('No other camera available');
+  const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: other.deviceId } }, audio: false });
+  return s.getVideoTracks()[0];
+}
+
+$('flipBtn').addEventListener('click', async () => {
+  if (flipping || !localStream) return;
+  flipping = true;
+  const btn = $('flipBtn');
+  btn.disabled = true;
+
+  const oldTrack = localStream.getVideoTracks()[0];
+  const oldId = oldTrack?.getSettings?.().deviceId;
+  const wasEnabled = oldTrack ? oldTrack.enabled : true;
+  const next = facing === 'user' ? 'environment' : 'user';
+
+  // Release the current camera FIRST — most phones can't open two cameras at once,
+  // which is why asking for the new one while the old one was live silently failed.
+  if (oldTrack) { oldTrack.stop(); localStream.removeTrack(oldTrack); }
+
+  let newTrack = null;
+  try {
+    newTrack = await openCamera(next, oldId);
+    facing = next;
+  } catch (err) {
+    console.warn('Flip failed, restoring the previous camera:', err);
+    try {
+      const back = await navigator.mediaDevices.getUserMedia({
+        video: oldId ? { deviceId: { exact: oldId } } : { facingMode: facing }, audio: false,
+      });
+      newTrack = back.getVideoTracks()[0];
+    } catch (err2) { console.warn('Could not restore camera:', err2); }
+  }
+
+  if (newTrack) {
+    newTrack.enabled = wasEnabled;
     localStream.addTrack(newTrack);
+    const sender = pc?.getSenders().find(s => s.track && s.track.kind === 'video')
+      || pc?.getTransceivers().find(t => t.receiver.track && t.receiver.track.kind === 'video')?.sender;
+    try { if (sender) await sender.replaceTrack(newTrack); } catch (err) { console.warn('replaceTrack failed:', err); }
     $('localVideo').srcObject = localStream;
     $('localVideo').style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
-  } catch (err) { console.warn('Flip failed:', err); }
+  }
+
+  btn.disabled = false;
+  flipping = false;
 });
 
 let speakerOn = wantVideo;
