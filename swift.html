@@ -1101,7 +1101,6 @@ img { max-width: 100%; display: block; }
 
 
 /* ===== Call screen (voice + video) ===== */
-body { overflow: hidden; }
 .call-screen {
   position: fixed; inset: 0; z-index: 200;
   background: linear-gradient(180deg, var(--brand-dark), #0E0A1D 70%);
@@ -2242,6 +2241,15 @@ async function renderRunnerDashboard(runner) {
       <div class="swift-earnings-row">
         <div><b>${window.CP.fmtNaira(totalEarned)}</b><span>Total earned</span></div>
         <div><b>${(runner.avg_rating || 0).toFixed(1)}★</b><span>${runner.rating_count || 0} ratings</span></div>
+      </div>
+    </div>
+    <div class="swift-card">
+      <div class="swift-toggle-row">
+        <div>
+          <h3 style="margin-bottom:2px">Also selling something?</h3>
+          <p style="margin:0">Runners can list products too — it's the same marketplace.</p>
+        </div>
+        <a class="btn btn-primary" href="create.html" style="flex:none;text-decoration:none;">+ List</a>
       </div>
     </div>
     <div class="swift-card">
